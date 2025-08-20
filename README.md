@@ -93,11 +93,67 @@ This ensures Docling can find the models locally without downloading from Huggin
 
 ## Usage
 
-Run with multiple workers for maximum parallelism:
+### Optimal Startup Command
+
+The best way to start the API for maximum performance while avoiding system thrashing:
 
 ```bash
-# Run with uvicorn (number of workers = CPU cores)
-venv/bin/uvicorn app:app --host 0.0.0.0 --port 5001 --workers 4
+# Auto-detect CPU cores and use n-1 workers (reserves 1 CPU for system)
+export CPU_COUNT=$(python -c "import os; print(max(1, os.cpu_count() - 1))")
+uvicorn app:app --host 0.0.0.0 --port 5001 --workers $CPU_COUNT
+
+# Or as a one-liner:
+uvicorn app:app --host 0.0.0.0 --port 5001 --workers $(python -c "import os; print(max(1, os.cpu_count() - 1))")
+```
+
+### Manual Worker Configuration
+
+For specific environments or testing:
+
+```bash
+# Low resource system (1-2 workers)
+uvicorn app:app --host 0.0.0.0 --port 5001 --workers 2
+
+# Medium system (4-8 cores)
+uvicorn app:app --host 0.0.0.0 --port 5001 --workers 4
+
+# High-end system (16+ cores)
+uvicorn app:app --host 0.0.0.0 --port 5001 --workers 12
+
+# Development mode (single worker with reload)
+uvicorn app:app --host 0.0.0.0 --port 5001 --reload
+```
+
+### Production Deployment Script
+
+Create a `start_server.sh` script for consistent deployment:
+
+```bash
+#!/bin/bash
+# start_server.sh - Optimized Docling API startup
+
+# Calculate optimal workers (CPU count - 1 for system)
+CPU_COUNT=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+WORKERS=$((CPU_COUNT - 1))
+WORKERS=$((WORKERS < 1 ? 1 : WORKERS))  # Ensure at least 1 worker
+
+echo "System CPUs: $CPU_COUNT"
+echo "Using $WORKERS workers (reserving 1 CPU for system)"
+
+# Start uvicorn with optimized settings
+uvicorn app:app \
+  --host 0.0.0.0 \
+  --port 5001 \
+  --workers $WORKERS \
+  --loop asyncio \
+  --access-log \
+  --log-level info
+```
+
+Then run:
+```bash
+chmod +x start_server.sh
+./start_server.sh
 ```
 
 ## API
@@ -126,6 +182,17 @@ The markdown file is saved to `./output/document.md`
 1. **Multiple Uvicorn Workers**: Each worker is a separate OS process
 2. **ProcessPoolExecutor**: Each worker has a pool of processes for PDF processing
 3. **Total Parallelism**: `workers × max_workers` (e.g., 4 × 3 = 12 concurrent PDFs)
+
+### Parallelism Formula
+
+- **Uvicorn Workers**: `CPU_COUNT - 1` (reserve 1 CPU for system)
+- **Process Pool per Worker**: `MAX_WORKERS = max(1, cpu_count - 1)` (set in app.py)
+- **Total Concurrent PDFs**: `(CPU_COUNT - 1) × (CPU_COUNT - 1)`
+
+Examples:
+- 4-core system: 3 workers × 3 processes = 9 concurrent PDFs
+- 8-core system: 7 workers × 7 processes = 49 concurrent PDFs
+- 16-core system: 15 workers × 15 processes = 225 concurrent PDFs
 
 The combination of multiple workers and process pools provides true CPU parallelism, bypassing Python's GIL for CPU-intensive PDF processing.
 

@@ -6,3 +6,4 @@ httpx
 aiohttp
 tqdm
 psutil
+PyPDF2
