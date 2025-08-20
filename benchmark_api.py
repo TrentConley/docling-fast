@@ -32,6 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from statistics import mean, median, stdev
 from typing import List, Dict, Any
+from tqdm.asyncio import tqdm
 
 
 class DoclingBenchmark:
@@ -82,10 +83,18 @@ class DoclingBenchmark:
         file_size = pdf_path.stat().st_size
 
         try:
+            # Read file content
             with open(pdf_path, 'rb') as f:
-                files = {'file': (pdf_path.name, f, 'application/pdf')}
+                file_content = f.read()
 
-                async with self.session.post(url, data=files) as response:
+            # Create FormData properly
+            data = aiohttp.FormData()
+            data.add_field('file',
+                          file_content,
+                          filename=pdf_path.name,
+                          content_type='application/pdf')
+
+            async with self.session.post(url, data=data) as response:
                     end_time = time.time()
                     processing_time = end_time - start_time
 
@@ -129,8 +138,8 @@ class DoclingBenchmark:
     def get_optimal_concurrency(self) -> int:
         """Calculate optimal concurrency based on CPU cores."""
         cpu_count = psutil.cpu_count(logical=True)
-        # Use CPU count + 2 for I/O bound tasks
-        optimal = cpu_count + 2
+        # Use CPU count + 2 for I/O bound tasks, but cap at reasonable limit
+        optimal = min(cpu_count + 2, 20)  # Cap at 20 concurrent requests
         self.logger.info(f"Detected {cpu_count} CPU cores, using {optimal} concurrent requests")
         return optimal
 
@@ -145,21 +154,30 @@ class DoclingBenchmark:
 
         start_time = time.time()
         semaphore = asyncio.Semaphore(concurrency)
-        tasks = []
+        completed = 0
+        results = []
+        
+        # Create progress bar
+        pbar = tqdm(total=len(pdf_files), desc="Processing PDFs", unit="files")
 
         async def bounded_process(pdf_path: Path) -> Dict[str, Any]:
             async with semaphore:
                 if verbose:
                     self.logger.info(f"Processing {pdf_path.name}")
-                return await self.process_single_pdf(pdf_path)
+                result = await self.process_single_pdf(pdf_path)
+                pbar.update(1)
+                pbar.set_postfix({'success': result['status'] == 'success'})
+                return result
 
         # Create tasks for all PDFs
+        tasks = []
         for pdf_path in pdf_files:
             tasks.append(bounded_process(pdf_path))
 
         # Run all tasks concurrently
         self.logger.info("Starting concurrent processing...")
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        pbar.close()
         total_time = time.time() - start_time
 
         # Process results
