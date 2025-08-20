@@ -1,13 +1,8 @@
 #!/bin/bash
 # start_server.sh - Optimized Docling API startup
 
-# Calculate optimal workers (conservative to reduce memory usage)
-# Total processes = uvicorn_workers × process_pool_workers
-CPU_COUNT=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-# More conservative: use CPU/4 to account for process pools
-WORKERS=$((CPU_COUNT / 4))
-WORKERS=$((WORKERS < 1 ? 1 : WORKERS))  # Ensure at least 1 worker
-WORKERS=$((WORKERS > 4 ? 4 : WORKERS))  # Cap at 4 workers
+# Force a single uvicorn worker (we batch inside the process)
+WORKERS=1
 
 echo "========================================="
 echo "Docling API Server Startup"
@@ -27,8 +22,7 @@ if command -v nvidia-smi &> /dev/null; then
     fi
 fi
 
-echo "System CPUs: $CPU_COUNT"
-echo "Using $WORKERS workers"
+echo "Using $WORKERS worker (single-worker mode)"
 echo "========================================="
 
 # Set GPU-only environment variables
