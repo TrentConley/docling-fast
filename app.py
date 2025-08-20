@@ -12,6 +12,8 @@ from docling.document_converter import DocumentConverter
 # Set environment for performance
 os.environ["OMP_NUM_THREADS"] = "1"  # Prevent thread oversubscription
 os.environ["TOKENIZERS_PARALLELISM"] = "false"  # Avoid tokenizer warnings
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 # GPU memory management
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"  # Improve fragmentation and allow segment release
@@ -80,7 +82,7 @@ def get_converter():
             config = ConversionConfig(
                 table_structure_model="fast",  # Use fast model (139MB vs 203MB)
                 ocr_force_full_page=False,     # Only OCR when needed
-                do_ocr=True                    # Enable smart OCR
+                do_ocr=False                   # Disable OCR by default for speed
             )
             _converter = DocumentConverter(config=config)
             
@@ -96,20 +98,10 @@ def get_converter():
     return _converter
 
 
-def process_pdf_sync(pdf_content: bytes, filename: str, save_markdown: bool = True) -> dict:
-    """Process PDF in a separate process for true parallelism."""
+def process_pdf_sync(temp_path: str, filename: str, save_markdown: bool = True) -> dict:
+    """Process an already-saved PDF file in a separate process for true parallelism."""
     try:
-        logger.info(f"Starting processing of {filename} ({len(pdf_content)} bytes)")
-        
-        # Sanitize filename for safe file system usage
-        import re
-        safe_filename = re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
-        
-        # Save to temporary file (docling needs file path)
-        temp_path = f"/tmp/{safe_filename}"
-        with open(temp_path, 'wb') as f:
-            f.write(pdf_content)
-        logger.info(f"Saved temp file: {temp_path}")
+        logger.info(f"Starting processing of {filename} from temp path: {temp_path}")
         
         # Process with docling - reuse converter instance
         converter = get_converter()
@@ -175,6 +167,14 @@ def process_pdf_sync(pdf_content: bytes, filename: str, save_markdown: bool = Tr
             pass
 
 
+def _worker_init():
+    # Preload converter once per worker to remove cold-start latency
+    try:
+        get_converter()
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage process pool lifecycle."""
@@ -189,7 +189,7 @@ async def lifespan(app: FastAPI):
         logger.error("GPU required but not available!")
         raise RuntimeError("GPU required but not available. Cannot start server.")
     
-    executor = ProcessPoolExecutor(max_workers=MAX_WORKERS)
+    executor = ProcessPoolExecutor(max_workers=MAX_WORKERS, initializer=_worker_init)
     logger.info("ProcessPoolExecutor started successfully")
     logger.info("Each uvicorn worker processes exactly 1 PDF at a time")
     
@@ -225,7 +225,7 @@ async def root():
 
 
 @app.post("/process")
-async def process_pdf(file: UploadFile = File(...), save_markdown: bool = True):
+async def process_pdf(file: UploadFile = File(...), save_markdown: bool = False):
     """Process a PDF file with parallel execution.
     
     Args:
@@ -241,7 +241,7 @@ async def process_pdf(file: UploadFile = File(...), save_markdown: bool = True):
             logger.warning(f"Invalid file type: {file.filename}")
             raise HTTPException(status_code=400, detail="Only PDF files are supported")
         
-        # Read and check file size
+        # Stream to temp file to avoid large cross-process pickling
         content = await file.read()
         file_size_mb = len(content) / (1024 * 1024)
         logger.info(f"File size: {file_size_mb:.2f}MB")
@@ -259,21 +259,26 @@ async def process_pdf(file: UploadFile = File(...), save_markdown: bool = True):
             free_memory = (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)) / (1024**3)
             logger.info(f"GPU free memory before processing: {free_memory:.1f} GB")
         
+        # Save content to a temp file and pass path to worker to avoid copying large bytes between processes
+        import re
+        safe_filename = re.sub(r'[^a-zA-Z0-9._-]', '_', file.filename)
+        temp_path = f"/tmp/{safe_filename}"
+        with open(temp_path, 'wb') as f:
+            f.write(content)
+        logger.info(f"Saved upload to temp file: {temp_path}")
+
         # Process in separate process for true parallelism
         logger.info(f"Submitting {file.filename} to process pool (save_markdown={save_markdown})...")
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             executor,
             process_pdf_sync,
-            content,
+            temp_path,
             file.filename,
             save_markdown
         )
         
-        # Clear GPU cache after processing
-        if check_gpu_available() == "cuda":
-            import torch
-            torch.cuda.empty_cache()
+        # Do not clear GPU cache in parent process; the worker handles its own cache
         
         logger.info(f"Processing complete for {file.filename}: {result['status']}")
         
@@ -302,5 +307,5 @@ if __name__ == "__main__":
         "app:app",
         host="0.0.0.0",
         port=5001,
-        workers=cpu_count
+        workers=1
     )
