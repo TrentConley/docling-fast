@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 
 # Settings
 cpu_count = os.cpu_count() or 4  # Default to 4 if can't detect
-MAX_WORKERS = max(1, cpu_count - 1)  # Leave one CPU for the system
+# Reduce workers to prevent exponential process creation
+# With uvicorn workers, total processes = uvicorn_workers × MAX_WORKERS
+MAX_WORKERS = max(1, min(2, cpu_count // 4))  # Conservative: 1-2 processes per worker
 MAX_FILE_SIZE_MB = 50
 
 logger.info(f"System CPU count: {cpu_count}")
@@ -30,6 +32,25 @@ logger.info(f"Using {MAX_WORKERS} workers for ProcessPoolExecutor")
 
 # Process pool executor
 executor = None
+
+# Global converter instance (loaded once per process)
+_converter = None
+
+
+def get_converter():
+    """Get or create the DocumentConverter instance."""
+    global _converter
+    if _converter is None:
+        logger.info("Initializing DocumentConverter (first time per process)...")
+        try:
+            from docling.datamodel.base_models import ConversionConfig
+            config = ConversionConfig()
+            _converter = DocumentConverter(config=config)
+        except Exception as e:
+            logger.warning(f"Failed to create configured converter: {e}")
+            _converter = DocumentConverter()
+        logger.info("DocumentConverter initialized")
+    return _converter
 
 
 def process_pdf_sync(pdf_content: bytes, filename: str) -> dict:
@@ -47,28 +68,8 @@ def process_pdf_sync(pdf_content: bytes, filename: str) -> dict:
             f.write(pdf_content)
         logger.info(f"Saved temp file: {temp_path}")
         
-        # Process with docling - fast OCR settings
-        logger.info("Importing docling modules...")
-        try:
-            from docling.datamodel.base_models import ConversionConfig
-            logger.info("ConversionConfig imported successfully")
-        except ImportError as e:
-            logger.error(f"Failed to import ConversionConfig: {e}")
-            # Try without config
-            logger.info("Creating DocumentConverter without config...")
-            converter = DocumentConverter()
-        else:
-            # Configure for speed with OCR
-            logger.info("Creating conversion config...")
-            try:
-                config = ConversionConfig()
-                logger.info("Basic ConversionConfig created")
-            except Exception as e:
-                logger.error(f"Failed to create ConversionConfig: {e}")
-                converter = DocumentConverter()
-            else:
-                logger.info("Creating DocumentConverter with config...")
-                converter = DocumentConverter(config=config)
+        # Process with docling - reuse converter instance
+        converter = get_converter()
         
         logger.info(f"Converting {filename}...")
         result = converter.convert(temp_path)
