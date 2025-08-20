@@ -7,6 +7,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from docling.document_converter import DocumentConverter
 
+# Set environment for performance
+os.environ["OMP_NUM_THREADS"] = "1"  # Prevent thread oversubscription
+os.environ["TOKENIZERS_PARALLELISM"] = "false"  # Avoid tokenizer warnings
+
 # Settings
 MAX_WORKERS = max(1, os.cpu_count() - 1)  # Leave one CPU for the system
 MAX_FILE_SIZE_MB = 50
@@ -23,19 +27,39 @@ def process_pdf_sync(pdf_content: bytes, filename: str) -> dict:
         with open(temp_path, 'wb') as f:
             f.write(pdf_content)
         
-        # Process with docling
-        converter = DocumentConverter()
+        # Process with docling - fast OCR settings
+        from docling.datamodel.base_models import ConversionConfig
+        
+        # Configure for speed with OCR
+        config = ConversionConfig(
+            do_ocr=True,  # Enable OCR
+            do_table_structure=True,  # Keep table detection
+            ocr_force_full_page=False,  # Only OCR when text layer is missing
+            ocr_lang="eng"  # Specify language for faster processing
+        )
+        converter = DocumentConverter(config=config)
         result = converter.convert(temp_path)
+        
+        # Save markdown to file
+        markdown_content = result.document.export_to_markdown()
+        output_dir = Path("output")
+        output_dir.mkdir(exist_ok=True)
+        
+        # Save with same name but .md extension
+        output_path = output_dir / f"{Path(filename).stem}.md"
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(markdown_content)
         
         # Clean up
         os.remove(temp_path)
         
-        # Return results
+        # Return minimal results (not the full content)
         return {
             "status": "success",
             "filename": filename,
             "pages": len(result.document.pages) if hasattr(result.document, 'pages') else 0,
-            "content": result.document.export_to_markdown()
+            "output_path": str(output_path),
+            "size_kb": len(markdown_content) / 1024
         }
     except Exception as e:
         return {

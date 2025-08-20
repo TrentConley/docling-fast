@@ -22,7 +22,7 @@ async def process_pdf(client: httpx.AsyncClient, pdf_path: Path) -> dict:
             response = await client.post(API_URL, files=files)
             response.raise_for_status()
             result = response.json()
-            print(f"✓ Completed: {pdf_path.name} - {result['pages']} pages")
+            print(f"✓ Completed: {pdf_path.name} - {result['pages']} pages - Saved to: {result['output_path']}")
             return result
     except Exception as e:
         print(f"✗ Failed: {pdf_path.name} - {str(e)}")
@@ -68,6 +68,7 @@ async def main():
         print(f"Total pages: {total_pages}")
         print(f"Average time per PDF: {total_time/len(pdf_files):.2f}s")
         print(f"Throughput: {len(pdf_files)/total_time:.2f} PDFs/second")
+        print(f"\nMarkdown files saved in: ./output/")
 
 
 if __name__ == "__main__":
