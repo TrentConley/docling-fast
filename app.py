@@ -16,8 +16,10 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"  # Avoid tokenizer warnings
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
-# GPU memory management
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"  # Improve fragmentation and allow segment release
+# GPU memory management optimized for RTX 3090 (24GB VRAM)
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:1024,roundup_power2_divisions:16"  # Optimize for large VRAM
+os.environ["CUDA_LAUNCH_BLOCKING"] = "0"  # Enable async CUDA operations
+os.environ["CUDA_CACHE_MAXSIZE"] = "268435456"  # 256MB CUDA cache
 
 # Configure logging
 logging.basicConfig(
@@ -26,18 +28,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Settings
+# Settings optimized for RTX 3090 (24GB VRAM) + high CPU count
 cpu_count = os.cpu_count() or 4  # Default to 4 if can't detect
-# One PDF processor per uvicorn worker for simplicity
-MAX_WORKERS = 1  # Each uvicorn worker gets exactly 1 PDF processor
-MAX_FILE_SIZE_MB = 100  # Increased from 50MB to handle larger PDFs
+# Optimize for RTX 3090: Each worker needs ~2-3GB VRAM, 24GB allows ~6-8 workers
+MAX_WORKERS = min(8, max(1, cpu_count // 2))  # Scale with CPU but cap at 8 for RTX 3090
+MAX_FILE_SIZE_MB = 500  # Increased for high-end hardware capabilities
+# Batch size for processing multiple smaller files efficiently
+BATCH_PROCESSING_THRESHOLD = 10  # Files under 10MB can be batched
 
 # GPU-only processing settings
 REQUIRE_GPU = os.environ.get("REQUIRE_GPU", "true").lower() == "true"
 
 logger.info(f"System CPU count: {cpu_count}")
-logger.info(f"Using {MAX_WORKERS} worker for ProcessPoolExecutor (1 PDF processor per uvicorn worker)")
+logger.info(f"Using {MAX_WORKERS} workers for ProcessPoolExecutor (optimized for RTX 3090)")
 logger.info(f"GPU-only mode: {REQUIRE_GPU}")
+logger.info(f"Max file size: {MAX_FILE_SIZE_MB}MB")
+logger.info(f"Batch processing threshold: {BATCH_PROCESSING_THRESHOLD}MB")
 
 # Process pool executor
 executor = None
@@ -52,10 +58,14 @@ def check_gpu_available():
         import torch
         if torch.cuda.is_available():
             device_name = torch.cuda.get_device_name(0)
-            total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
+            props = torch.cuda.get_device_properties(0)
+            total_memory = props.total_memory / (1024**3)  # GB
             allocated_memory = torch.cuda.memory_allocated(0) / (1024**3)  # GB
+            reserved_memory = torch.cuda.memory_reserved(0) / (1024**3)  # GB
             logger.info(f"CUDA GPU detected: {device_name}")
-            logger.info(f"GPU Memory: {allocated_memory:.1f}/{total_memory:.1f} GB used")
+            logger.info(f"GPU Memory: {allocated_memory:.1f}GB used, {reserved_memory:.1f}GB reserved, {total_memory:.1f}GB total")
+            logger.info(f"GPU Compute Capability: {props.major}.{props.minor}")
+            logger.info(f"GPU Multiprocessors: {props.multi_processor_count}")
             return "cuda"
         elif torch.backends.mps.is_available():
             logger.info("Apple Metal GPU detected")
@@ -87,10 +97,15 @@ def get_converter():
             )
             _converter = DocumentConverter(config=config)
             
-            # Force models to GPU if available
+            # Optimize GPU utilization for RTX 3090
             if device == "cuda":
                 import torch
                 torch.cuda.empty_cache()  # Clear any cached memory
+                # Enable optimizations for RTX 3090
+                torch.backends.cudnn.benchmark = True  # Optimize for consistent input sizes
+                torch.backends.cuda.matmul.allow_tf32 = True  # Enable TF32 for faster computation
+                if hasattr(torch.backends.cudnn, 'allow_tf32'):
+                    torch.backends.cudnn.allow_tf32 = True
                 
         except Exception as e:
             logger.warning(f"Failed to create configured converter: {e}")
@@ -182,7 +197,7 @@ async def lifespan(app: FastAPI):
     global executor
     
     # Startup
-    logger.info(f"Starting ProcessPoolExecutor with {MAX_WORKERS} worker")
+    logger.info(f"Starting ProcessPoolExecutor with {MAX_WORKERS} workers (RTX 3090 optimized)")
     
     # Check GPU availability at startup
     device = check_gpu_available()
@@ -197,7 +212,8 @@ async def lifespan(app: FastAPI):
         mp_context=mp.get_context("spawn")
     )
     logger.info("ProcessPoolExecutor started successfully")
-    logger.info("Each uvicorn worker processes exactly 1 PDF at a time")
+    logger.info(f"System can process up to {MAX_WORKERS} PDFs concurrently")
+    logger.info("Optimized for RTX 3090 with 24GB VRAM")
     
     yield
     
@@ -223,10 +239,12 @@ async def root():
         "service": "Docling PDF Processor",
         "max_workers": MAX_WORKERS,
         "max_file_size_mb": MAX_FILE_SIZE_MB,
+        "batch_threshold_mb": BATCH_PROCESSING_THRESHOLD,
         "gpu_available": device != "cpu",
         "device": device,
         "gpu_required": REQUIRE_GPU,
-        "processing_model": "1 PDF per uvicorn worker"
+        "processing_model": f"Up to {MAX_WORKERS} concurrent PDFs (RTX 3090 optimized)",
+        "hardware_optimized_for": "RTX 3090 24GB + high CPU count"
     }
 
 
@@ -259,11 +277,19 @@ async def process_pdf(file: UploadFile = File(...), save_markdown: bool = False)
                 detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB"
             )
         
-        # Check GPU memory before processing (optional monitoring)
+        # Enhanced GPU memory monitoring for RTX 3090
         if check_gpu_available() == "cuda":
             import torch
-            free_memory = (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)) / (1024**3)
-            logger.info(f"GPU free memory before processing: {free_memory:.1f} GB")
+            props = torch.cuda.get_device_properties(0)
+            total_memory = props.total_memory / (1024**3)
+            allocated_memory = torch.cuda.memory_allocated(0) / (1024**3)
+            reserved_memory = torch.cuda.memory_reserved(0) / (1024**3)
+            free_memory = total_memory - reserved_memory
+            logger.info(f"GPU memory before processing: {allocated_memory:.1f}GB used, {reserved_memory:.1f}GB reserved, {free_memory:.1f}GB free")
+            
+            # Warn if memory usage is high
+            if reserved_memory / total_memory > 0.8:
+                logger.warning(f"High GPU memory usage detected: {reserved_memory/total_memory*100:.1f}%")
         
         # Save content to a temp file and pass path to worker to avoid copying large bytes between processes
         import re

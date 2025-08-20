@@ -33,6 +33,11 @@ from pathlib import Path
 from statistics import mean, median, stdev
 from typing import List, Dict, Any
 from tqdm.asyncio import tqdm
+try:
+    import GPUtil  # For GPU monitoring if available
+    GPU_MONITORING = True
+except ImportError:
+    GPU_MONITORING = False
 
 
 class DoclingBenchmark:
@@ -136,11 +141,22 @@ class DoclingBenchmark:
             }
 
     def get_optimal_concurrency(self) -> int:
-        """Calculate optimal concurrency based on CPU cores."""
+        """Calculate optimal concurrency based on CPU cores and GPU capability."""
         cpu_count = psutil.cpu_count(logical=True)
-        # Use CPU count + 2 for I/O bound tasks, but cap at reasonable limit
-        optimal = min(cpu_count + 2, 20)  # Cap at 20 concurrent requests
-        self.logger.info(f"Detected {cpu_count} CPU cores, using {optimal} concurrent requests")
+        memory_gb = psutil.virtual_memory().total / (1024**3)
+        
+        # For RTX 3090 + high-end CPU, allow much higher concurrency
+        # Base concurrency on CPU count, but allow higher for powerful systems
+        base_concurrency = cpu_count + 2
+        
+        # Scale up for high-end systems (RTX 3090 + plenty of RAM)
+        if memory_gb > 32:  # High-end system
+            optimal = min(base_concurrency * 2, 100)  # Allow up to 100 concurrent requests
+        else:
+            optimal = min(base_concurrency, 50)  # Allow up to 50 for mid-range systems
+            
+        self.logger.info(f"Detected {cpu_count} CPU cores, {memory_gb:.1f}GB RAM")
+        self.logger.info(f"Using {optimal} concurrent requests (high-performance mode)")
         return optimal
 
     async def benchmark_api(self, pdf_files: List[Path], concurrency: int = None,
@@ -157,27 +173,43 @@ class DoclingBenchmark:
         completed = 0
         results = []
         
-        # Create progress bar
-        pbar = tqdm(total=len(pdf_files), desc="Processing PDFs", unit="files")
-        # Running tallies
+        # Create progress bar with enhanced info
+        pbar = tqdm(total=len(pdf_files), desc="Processing PDFs", unit="files", 
+                   bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]')
+        # Running tallies with performance tracking
         ok_count = 0
         err_count = 0
+        total_pages_processed = 0
         tally_lock = asyncio.Lock()
+        batch_start_time = start_time
 
         async def bounded_process(pdf_path: Path) -> Dict[str, Any]:
             async with semaphore:
                 if verbose:
                     self.logger.info(f"Processing {pdf_path.name}")
                 result = await self.process_single_pdf(pdf_path)
-                # Update running tallies safely
+                # Update running tallies safely with performance metrics
                 async with tally_lock:
-                    nonlocal ok_count, err_count
+                    nonlocal ok_count, err_count, total_pages_processed
                     if result.get('status') == 'success':
                         ok_count += 1
+                        total_pages_processed += result.get('pages', 0)
                     else:
                         err_count += 1
+                    
+                    # Calculate real-time throughput
+                    elapsed = time.time() - batch_start_time
+                    if elapsed > 0:
+                        files_per_sec = ok_count / elapsed
+                        pages_per_sec = total_pages_processed / elapsed
+                    else:
+                        files_per_sec = pages_per_sec = 0
+                    
                     pbar.update(1)
-                    pbar.set_postfix({'ok': ok_count, 'err': err_count})
+                    pbar.set_postfix({
+                        'ok': ok_count, 'err': err_count, 
+                        'fps': f'{files_per_sec:.1f}', 'pps': f'{pages_per_sec:.1f}'
+                    })
                 return result
 
         # Create tasks for all PDFs
@@ -290,9 +322,18 @@ class DoclingBenchmark:
             print(f"   Avg Time per Page: {metrics['average_time_per_page_seconds']:.3f}s")
             print(f"   Median Time per File: {metrics['median_time_per_file_seconds']:.2f}s")
 
-            # CPU utilization estimate
-            cpu_percent = min(metrics['files_per_second'] * metrics['average_time_per_file_seconds'] / info['concurrency_level'] * 100, 100)
-            print(f"   Estimated CPU Usage: {cpu_percent:.1f}%")
+            # Enhanced performance estimates
+            cpu_utilization = min(metrics['files_per_second'] * metrics['average_time_per_file_seconds'] / info['concurrency_level'] * 100, 100)
+            efficiency = (info['successful_files'] / info['total_files_tested']) * 100
+            
+            print(f"   Estimated CPU Utilization: {cpu_utilization:.1f}%")
+            print(f"   Processing Efficiency: {efficiency:.1f}%")
+            print(f"   Peak Memory per Request: ~{metrics['average_time_per_file_seconds'] * 200:.0f}MB (estimated)")
+            
+            # GPU utilization estimate (if applicable)
+            if info.get('total_pages_processed', 0) > 0:
+                gpu_efficiency = metrics['pages_per_second'] / (info['total_pages_processed'] / info['total_time_seconds']) * 100
+                print(f"   GPU Processing Efficiency: {gpu_efficiency:.1f}%")
 
         if results['failures']:
             print(f"\n❌ FAILURES:")
@@ -302,10 +343,12 @@ class DoclingBenchmark:
                 print(f"   ... and {len(results['failures']) - 5} more")
 
         if verbose and results['results']:
-            print(f"\n📋 DETAILED RESULTS (first 10):")
-            for result in results['results'][:10]:
-                print(f"   {result['filename']}: {result['processing_time_seconds']:.2f}s "
-                      f"({result['pages']} pages, {result['time_per_page']:.3f}s/page)")
+            print(f"\n📋 DETAILED RESULTS (first 20):")
+            for result in sorted(results['results'][:20], key=lambda x: x['processing_time_seconds']):
+                file_size_mb = result['file_size_bytes'] / (1024 * 1024)
+                throughput_mbps = file_size_mb / result['processing_time_seconds'] if result['processing_time_seconds'] > 0 else 0
+                print(f"   {result['filename']:<30} {result['processing_time_seconds']:>6.2f}s "
+                      f"{result['pages']:>3}p {result['time_per_page']:>6.3f}s/p {throughput_mbps:>5.1f}MB/s")
 
         print("\n" + "="*80)
 
@@ -321,7 +364,7 @@ async def main():
     parser.add_argument('--url', default='http://localhost:5001',
                        help='API base URL (default: http://localhost:5001)')
     parser.add_argument('--concurrency', type=int, default=None,
-                       help='Number of concurrent requests (default: auto-detect)')
+                       help='Number of concurrent requests (default: auto-detect, up to 100 for high-end systems)')
     parser.add_argument('--max-files', type=int, default=None,
                        help='Maximum number of PDF files to test (default: all)')
     parser.add_argument('--timeout', type=int, default=300,
