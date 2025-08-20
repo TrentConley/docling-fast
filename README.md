@@ -22,7 +22,7 @@ Run with multiple workers for maximum parallelism:
 
 ```bash
 # Run with uvicorn (number of workers = CPU cores)
-uvicorn app:app --host 0.0.0.0 --port 5001 --workers 4
+venv/bin/uvicorn app:app --host 0.0.0.0 --port 5001 --workers 4
 ```
 
 ## API

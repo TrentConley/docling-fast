@@ -31,10 +31,10 @@ async def process_pdf(client: httpx.AsyncClient, pdf_path: Path) -> dict:
 
 async def main():
     # Get first 10 PDFs from Pdf directory
-    pdf_files = glob.glob("Pdf/*.pdf")[:10]
+    pdf_files = glob.glob("uploaded/*.pdf")[:10]
     
     if not pdf_files:
-        print("No PDF files found in Pdf directory")
+        print("No PDF files found in uploaded directory")
         return
     
     print(f"Found {len(pdf_files)} PDFs to process")
