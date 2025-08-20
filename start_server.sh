@@ -2,7 +2,7 @@
 # start_server.sh - Optimized Docling API startup
 
 # Optimized for RTX 3090: Allow multiple workers for better throughput
-WORKERS=2  # Start with 2 uvicorn workers, each can handle multiple concurrent PDFs
+WORKERS=1  # Start with 1 uvicorn worker to reduce memory footprint
 
 echo "========================================="
 echo "Docling API Server Startup (RTX 3090 Optimized)"
@@ -24,8 +24,8 @@ if command -v nvidia-smi &> /dev/null; then
         echo "GPU detected: Total VRAM ${VRAM_TOTAL_MB}MB, Free ${VRAM_FREE_MB}MB"
         
         # RTX 3090 with 24GB can handle more workers
-        # Conservative estimate: 2-3GB per worker, leave 4GB buffer for large files
-        VRAM_WORKERS=$(( (VRAM_FREE_MB - 4096) / 2048 ))
+        # Conservative estimate: ~3GB per worker, leave 8GB buffer for large files
+        VRAM_WORKERS=$(( (VRAM_FREE_MB - 8192) / 3072 ))
         
         # Cap workers based on VRAM, but allow up to 4 for RTX 3090
         MAX_VRAM_WORKERS=4
@@ -81,7 +81,6 @@ uvicorn app:app \
   --loop asyncio \
   --access-log \
   --log-level info \
-  --worker-class uvicorn.workers.UvicornWorker \
   --backlog 2048 \
   --limit-max-requests 1000 \
   --timeout-keep-alive 30

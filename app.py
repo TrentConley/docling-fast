@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # Settings optimized for RTX 3090 (24GB VRAM) + high CPU count
 cpu_count = os.cpu_count() or 4  # Default to 4 if can't detect
 # Optimize for RTX 3090: Each worker needs ~2-3GB VRAM, 24GB allows ~6-8 workers
-MAX_WORKERS = min(8, max(1, cpu_count // 2))  # Scale with CPU but cap at 8 for RTX 3090
+MAX_WORKERS = min(4, max(1, cpu_count // 4))  # Conservative scaling: cap at 4 workers
 MAX_FILE_SIZE_MB = 500  # Increased for high-end hardware capabilities
 # Batch size for processing multiple smaller files efficiently
 BATCH_PROCESSING_THRESHOLD = 10  # Files under 10MB can be batched
