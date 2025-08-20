@@ -14,7 +14,7 @@ os.environ["OMP_NUM_THREADS"] = "1"  # Prevent thread oversubscription
 os.environ["TOKENIZERS_PARALLELISM"] = "false"  # Avoid tokenizer warnings
 
 # GPU memory management
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"  # Prevent memory fragmentation
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:512"  # Improve fragmentation and allow segment release
 
 # Configure logging
 logging.basicConfig(
@@ -161,6 +161,18 @@ def process_pdf_sync(pdf_content: bytes, filename: str, save_markdown: bool = Tr
             "error": str(e),
             "traceback": traceback.format_exc()
         }
+    finally:
+        # Ensure memory is released in the worker process
+        try:
+            import gc
+            gc.collect()
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                torch.mps.empty_cache()
+        except Exception:
+            pass
 
 
 @asynccontextmanager
