@@ -17,8 +17,8 @@ echo "========================================="
 if command -v nvidia-smi &> /dev/null; then
     VRAM_FREE_MB=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -n1)
     if [ ! -z "$VRAM_FREE_MB" ]; then
-        # Conservative: 3GB per process, with 1GB reserved
-        VRAM_WORKERS=$(( (VRAM_FREE_MB - 1024) / 3072 ))
+        # More conservative: 3GB per process, with 2GB reserved for safety
+        VRAM_WORKERS=$(( (VRAM_FREE_MB - 2048) / 4072 ))
         if [ $VRAM_WORKERS -gt 0 ] && [ $VRAM_WORKERS -lt $WORKERS ]; then
             echo "GPU detected with ${VRAM_FREE_MB}MB free"
             WORKERS=$VRAM_WORKERS
