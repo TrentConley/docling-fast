@@ -1,4 +1,5 @@
 import os
+import multiprocessing as mp
 import asyncio
 import logging
 import traceback
@@ -189,7 +190,12 @@ async def lifespan(app: FastAPI):
         logger.error("GPU required but not available!")
         raise RuntimeError("GPU required but not available. Cannot start server.")
     
-    executor = ProcessPoolExecutor(max_workers=MAX_WORKERS, initializer=_worker_init)
+    # Use spawn start method to be CUDA-safe in subprocesses
+    executor = ProcessPoolExecutor(
+        max_workers=MAX_WORKERS,
+        initializer=_worker_init,
+        mp_context=mp.get_context("spawn")
+    )
     logger.info("ProcessPoolExecutor started successfully")
     logger.info("Each uvicorn worker processes exactly 1 PDF at a time")
     
