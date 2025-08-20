@@ -60,5 +60,4 @@ htmlcov/
 docker-compose.override.yml
 
 # Data
-Pdf/
 output/
