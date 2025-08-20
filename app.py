@@ -1,6 +1,5 @@
 import os
 import asyncio
-from asyncio import Semaphore
 import logging
 import traceback
 from concurrent.futures import ProcessPoolExecutor
@@ -26,17 +25,15 @@ logger = logging.getLogger(__name__)
 
 # Settings
 cpu_count = os.cpu_count() or 4  # Default to 4 if can't detect
-# Reduce workers to prevent exponential process creation
-# With uvicorn workers, total processes = uvicorn_workers × MAX_WORKERS
-MAX_WORKERS = max(1, min(2, cpu_count // 4))  # Conservative: 1-2 processes per worker
+# One PDF processor per uvicorn worker for simplicity
+MAX_WORKERS = 1  # Each uvicorn worker gets exactly 1 PDF processor
 MAX_FILE_SIZE_MB = 100  # Increased from 50MB to handle larger PDFs
 
 # GPU-only processing settings
 REQUIRE_GPU = os.environ.get("REQUIRE_GPU", "true").lower() == "true"
-MAX_CONCURRENT_PDFS_GPU = int(os.environ.get("MAX_CONCURRENT_PDFS_GPU", "1"))  # Very conservative for GPU
 
 logger.info(f"System CPU count: {cpu_count}")
-logger.info(f"Using {MAX_WORKERS} workers for ProcessPoolExecutor")
+logger.info(f"Using {MAX_WORKERS} worker for ProcessPoolExecutor (1 PDF processor per uvicorn worker)")
 logger.info(f"GPU-only mode: {REQUIRE_GPU}")
 
 # Process pool executor
@@ -44,7 +41,6 @@ executor = None
 
 # Global converter instance (loaded once per process)
 _converter = None
-pdf_semaphore = None  # Will be initialized in lifespan
 
 
 def check_gpu_available():
@@ -170,10 +166,10 @@ def process_pdf_sync(pdf_content: bytes, filename: str, save_markdown: bool = Tr
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage process pool lifecycle."""
-    global executor, pdf_semaphore
+    global executor
     
     # Startup
-    logger.info(f"Starting ProcessPoolExecutor with {MAX_WORKERS} workers")
+    logger.info(f"Starting ProcessPoolExecutor with {MAX_WORKERS} worker")
     
     # Check GPU availability at startup
     device = check_gpu_available()
@@ -183,10 +179,7 @@ async def lifespan(app: FastAPI):
     
     executor = ProcessPoolExecutor(max_workers=MAX_WORKERS)
     logger.info("ProcessPoolExecutor started successfully")
-    
-    # Initialize concurrent PDF limit for GPU
-    pdf_semaphore = Semaphore(MAX_CONCURRENT_PDFS_GPU)
-    logger.info(f"GPU processing with max {MAX_CONCURRENT_PDFS_GPU} concurrent PDFs per worker")
+    logger.info("Each uvicorn worker processes exactly 1 PDF at a time")
     
     yield
     
@@ -215,7 +208,7 @@ async def root():
         "gpu_available": device != "cpu",
         "device": device,
         "gpu_required": REQUIRE_GPU,
-        "max_concurrent_pdfs": MAX_CONCURRENT_PDFS_GPU
+        "processing_model": "1 PDF per uvicorn worker"
     }
 
 
@@ -248,30 +241,27 @@ async def process_pdf(file: UploadFile = File(...), save_markdown: bool = True):
                 detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB"
             )
         
-        # Limit concurrent PDF processing to prevent GPU OOM
-        async with pdf_semaphore:
-            logger.info(f"Acquired GPU semaphore, submitting {file.filename} to process pool...")
-            
-            # Check GPU memory before processing (optional monitoring)
-            if check_gpu_available() == "cuda":
-                import torch
-                free_memory = (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)) / (1024**3)
-                logger.info(f"GPU free memory before processing: {free_memory:.1f} GB")
-            
-            # Process in separate process for true parallelism
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                executor,
-                process_pdf_sync,
-                content,
-                file.filename,
-                save_markdown
-            )
-            
-            # Clear GPU cache after processing
-            if check_gpu_available() == "cuda":
-                import torch
-                torch.cuda.empty_cache()
+        # Check GPU memory before processing (optional monitoring)
+        if check_gpu_available() == "cuda":
+            import torch
+            free_memory = (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)) / (1024**3)
+            logger.info(f"GPU free memory before processing: {free_memory:.1f} GB")
+        
+        # Process in separate process for true parallelism
+        logger.info(f"Submitting {file.filename} to process pool (save_markdown={save_markdown})...")
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            executor,
+            process_pdf_sync,
+            content,
+            file.filename,
+            save_markdown
+        )
+        
+        # Clear GPU cache after processing
+        if check_gpu_available() == "cuda":
+            import torch
+            torch.cuda.empty_cache()
         
         logger.info(f"Processing complete for {file.filename}: {result['status']}")
         

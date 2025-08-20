@@ -17,8 +17,8 @@ echo "========================================="
 if command -v nvidia-smi &> /dev/null; then
     VRAM_FREE_MB=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -n1)
     if [ ! -z "$VRAM_FREE_MB" ]; then
-        # More conservative: 3GB per process, with 2GB reserved for safety
-        VRAM_WORKERS=$(( (VRAM_FREE_MB - 2048) / 4072 ))
+        # Each worker needs ~4GB for one PDF, with 2GB reserved for safety
+        VRAM_WORKERS=$(( (VRAM_FREE_MB - 2048) / 4096 ))
         if [ $VRAM_WORKERS -gt 0 ] && [ $VRAM_WORKERS -lt $WORKERS ]; then
             echo "GPU detected with ${VRAM_FREE_MB}MB free"
             WORKERS=$VRAM_WORKERS
@@ -33,11 +33,10 @@ echo "========================================="
 
 # Set GPU-only environment variables
 export REQUIRE_GPU=true
-export MAX_CONCURRENT_PDFS_GPU=1
 export CUDA_VISIBLE_DEVICES=0  # Use first GPU only
 
 echo "GPU-only mode enabled (REQUIRE_GPU=true)"
-echo "Max concurrent PDFs per worker: $MAX_CONCURRENT_PDFS_GPU"
+echo "Each uvicorn worker processes 1 PDF at a time"
 echo "========================================="
 
 # Start uvicorn with optimized settings
