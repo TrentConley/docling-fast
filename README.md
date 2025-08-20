@@ -16,6 +16,34 @@ A simple FastAPI service that processes PDFs with true parallelism using Docling
 pip install -r requirements.txt
 ```
 
+## Model Setup (If Hugging Face is Blocked)
+
+If you can't access Hugging Face directly, you can use the pre-downloaded models included in this repository:
+
+### Copy Models to Hugging Face Cache
+
+```bash
+# Create Hugging Face cache directory if it doesn't exist
+mkdir -p ~/.cache/huggingface/hub
+
+# Copy the models from this repo to your local cache
+cp -r models/models--ds4sd--docling-models ~/.cache/huggingface/hub/
+cp -r models/models--ds4sd--docling-layout-old ~/.cache/huggingface/hub/
+cp -r models/models--SWHL--RapidOCR ~/.cache/huggingface/hub/
+```
+
+### Verify Models are in Place
+
+After copying, verify the models are correctly placed:
+
+```bash
+ls -la ~/.cache/huggingface/hub/models--ds4sd--docling-models/
+ls -la ~/.cache/huggingface/hub/models--ds4sd--docling-layout-old/
+ls -la ~/.cache/huggingface/hub/models--SWHL--RapidOCR/
+```
+
+This ensures Docling can find the models locally without downloading from Hugging Face.
+
 ## Usage
 
 Run with multiple workers for maximum parallelism:
