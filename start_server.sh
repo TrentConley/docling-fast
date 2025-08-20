@@ -31,6 +31,15 @@ echo "System CPUs: $CPU_COUNT"
 echo "Using $WORKERS workers"
 echo "========================================="
 
+# Set GPU-only environment variables
+export REQUIRE_GPU=true
+export MAX_CONCURRENT_PDFS_GPU=1
+export CUDA_VISIBLE_DEVICES=0  # Use first GPU only
+
+echo "GPU-only mode enabled (REQUIRE_GPU=true)"
+echo "Max concurrent PDFs per worker: $MAX_CONCURRENT_PDFS_GPU"
+echo "========================================="
+
 # Start uvicorn with optimized settings
 uvicorn app:app \
   --host 0.0.0.0 \
