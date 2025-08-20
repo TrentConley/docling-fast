@@ -159,14 +159,25 @@ class DoclingBenchmark:
         
         # Create progress bar
         pbar = tqdm(total=len(pdf_files), desc="Processing PDFs", unit="files")
+        # Running tallies
+        ok_count = 0
+        err_count = 0
+        tally_lock = asyncio.Lock()
 
         async def bounded_process(pdf_path: Path) -> Dict[str, Any]:
             async with semaphore:
                 if verbose:
                     self.logger.info(f"Processing {pdf_path.name}")
                 result = await self.process_single_pdf(pdf_path)
-                pbar.update(1)
-                pbar.set_postfix({'success': result['status'] == 'success'})
+                # Update running tallies safely
+                async with tally_lock:
+                    nonlocal ok_count, err_count
+                    if result.get('status') == 'success':
+                        ok_count += 1
+                    else:
+                        err_count += 1
+                    pbar.update(1)
+                    pbar.set_postfix({'ok': ok_count, 'err': err_count})
                 return result
 
         # Create tasks for all PDFs
