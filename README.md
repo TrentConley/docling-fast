@@ -20,6 +20,53 @@ pip install -r requirements.txt
 
 If you can't access Hugging Face directly, you can use the pre-downloaded models included in this repository:
 
+### Download Repository with Models
+
+First, clone the repository and download the models:
+
+#### On CentOS/RHEL:
+```bash
+# Install Git LFS (required for downloading large model files)
+sudo yum install -y git-lfs
+git lfs install
+
+# Clone the repository
+git clone https://github.com/TrentConley/docling-fast.git
+cd docling-fast
+
+# Download the actual model files (this may take a while - ~2GB)
+git lfs pull
+```
+
+#### On Ubuntu/Debian:
+```bash
+# Install Git LFS
+sudo apt-get update
+sudo apt-get install -y git-lfs
+git lfs install
+
+# Clone the repository
+git clone https://github.com/TrentConley/docling-fast.git
+cd docling-fast
+
+# Download the model files
+git lfs pull
+```
+
+#### On macOS:
+```bash
+# Install Git LFS if not already installed
+brew install git-lfs
+git lfs install
+
+# Clone the repository
+git clone https://github.com/TrentConley/docling-fast.git
+cd docling-fast
+
+# Download the model files
+git lfs pull
+```
+
 ### Copy Models to Hugging Face Cache
 
 ```bash
