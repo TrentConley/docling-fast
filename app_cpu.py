@@ -65,7 +65,7 @@ def get_converter():
             from docling.datamodel.base_models import ConversionConfig
             # Optimize for speed - matching app.py
             config = ConversionConfig(
-                table_structure_model="fast",  # Use fast model
+                table_structure_model=None,    # Disable table structure processing
                 ocr_force_full_page=False,     # Only OCR when needed
                 do_ocr=False                   # Disable OCR by default for speed
             )
