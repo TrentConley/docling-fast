@@ -514,7 +514,7 @@ async def process_pdf(file: UploadFile = File(...), save_markdown: bool = True):
             pass
         raise HTTPException(status_code=400, detail="Invalid PDF file (bad header)")
 
-    logger.info(f"Accepted upload: name={file.filename} size_mb={fsz:.2f if fsz else 'unknown'} | {_gpu_mem_string()}")
+    logger.info(f"Accepted upload: name={file.filename} size_mb={f'{fsz:.2f}' if fsz else 'unknown'} | {_gpu_mem_string()}")
 
     # Submit bounded
     async with SUBMIT_SEM:

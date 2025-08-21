@@ -41,7 +41,7 @@ except ImportError:
 
 
 class DoclingBenchmark:
-    def __init__(self, base_url: str = "http://localhost:5002", timeout: int = 300):
+    def __init__(self, base_url: str = "http://localhost:5001", timeout: int = 300):
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
         self.session = None
@@ -361,8 +361,8 @@ class DoclingBenchmark:
 
 async def main():
     parser = argparse.ArgumentParser(description="Benchmark Docling API performance")
-    parser.add_argument('--url', default='http://localhost:5002',
-                       help='API base URL (default: http://localhost:5002)')
+    parser.add_argument('--url', default='http://localhost:5001',
+                       help='API base URL (default: http://localhost:5001)')
     parser.add_argument('--concurrency', type=int, default=None,
                        help='Number of concurrent requests (default: auto-detect, up to 100 for high-end systems)')
     parser.add_argument('--max-files', type=int, default=None,
