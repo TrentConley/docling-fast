@@ -270,12 +270,7 @@ async def process_pdf(file: UploadFile = File(...), save_markdown: bool = False)
         file_size_mb = len(content) / (1024 * 1024)
         logger.info(f"File size: {file_size_mb:.2f}MB")
         
-        if file_size_mb > MAX_FILE_SIZE_MB:
-            logger.warning(f"File too large: {file_size_mb:.2f}MB > {MAX_FILE_SIZE_MB}MB")
-            raise HTTPException(
-                status_code=413,
-                detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB"
-            )
+        # Accept all file sizes; rely on retry-on-OOM to eventually process
         
         # Enhanced GPU memory monitoring for RTX 3090
         if check_gpu_available() == "cuda":
@@ -302,25 +297,37 @@ async def process_pdf(file: UploadFile = File(...), save_markdown: bool = False)
         # Process in separate process for true parallelism
         logger.info(f"Submitting {file.filename} to process pool (save_markdown={save_markdown})...")
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            executor,
-            process_pdf_sync,
-            temp_path,
-            file.filename,
-            save_markdown
-        )
-        
-        # Do not clear GPU cache in parent process; the worker handles its own cache
-        
-        logger.info(f"Processing complete for {file.filename}: {result['status']}")
-        
-        if result["status"] == "error":
+        # Retry loop for GPU out-of-memory errors only
+        retry_delay = 1.0
+        while True:
+            result = await loop.run_in_executor(
+                executor,
+                process_pdf_sync,
+                temp_path,
+                file.filename,
+                save_markdown
+            )
+
+            # Do not clear GPU cache in parent process; the worker handles its own cache
+
+            logger.info(f"Processing attempt complete for {file.filename}: {result['status']}")
+
+            if result["status"] != "error":
+                return result
+
+            error_text = str(result.get("error", "")).lower()
+            is_oom = ("out of memory" in error_text) or ("cuda out of memory" in error_text) or ("mps out of memory" in error_text) or ("oom" in error_text)
+            if is_oom:
+                logger.warning(f"GPU OOM detected while processing {file.filename}. Retrying in {retry_delay:.1f}s...")
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, 30.0)
+                continue
+
+            # Non-OOM errors bubble up as 500
             logger.error(f"Processing failed: {result['error']}")
             if "traceback" in result:
                 logger.error(f"Full traceback:\n{result['traceback']}")
             raise HTTPException(status_code=500, detail=result["error"])
-        
-        return result
         
     except HTTPException:
         raise
