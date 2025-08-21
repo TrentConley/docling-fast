@@ -8,10 +8,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.base_models import ConversionConfig, InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
+from docling.document_converter import DocumentConverter
 
 # CPU-only execution: hide GPUs from downstream libraries
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -65,32 +62,15 @@ def get_converter():
         device = check_gpu_available()
 
         try:
-            # Optimize for speed similar to app.py defaults
+            from docling.datamodel.base_models import ConversionConfig
+            # Optimize for speed - matching app.py
             config = ConversionConfig(
-                table_structure_model="fast",
-                ocr_force_full_page=False,
-                do_ocr=False
+                table_structure_model="fast",  # Use fast model
+                ocr_force_full_page=False,     # Only OCR when needed
+                do_ocr=False                   # Disable OCR by default for speed
             )
-
-            # Force CPU for the Docling pipeline and use all cores
-            accelerator_options = AcceleratorOptions(
-                num_threads=cpu_count,
-                device=AcceleratorDevice.CPU,
-            )
-            pipeline_options = PdfPipelineOptions()
-            pipeline_options.accelerator_options = accelerator_options
-            pipeline_options.do_ocr = False
-            pipeline_options.do_table_structure = True
-
-            _converter = DocumentConverter(
-                config=config,
-                format_options={
-                    InputFormat.PDF: PdfFormatOption(
-                        pipeline_options=pipeline_options,
-                    )
-                },
-            )
-
+            _converter = DocumentConverter(config=config)
+            
         except Exception as e:
             logger.warning(f"Failed to create configured converter: {e}")
             _converter = DocumentConverter()
