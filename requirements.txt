@@ -7,3 +7,4 @@ aiohttp
 tqdm
 psutil
 PyPDF2
+pymupdf4llm
