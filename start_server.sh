@@ -52,20 +52,21 @@ fi
 
 echo "Configuration:"
 echo "  Uvicorn workers: $WORKERS"
-echo "  ProcessPool workers per uvicorn worker: 8 (auto-scaling)"
-echo "  Max concurrent PDFs: $(( WORKERS * 8 ))"
+echo "  ProcessPool workers: 2 (MAX_WORKERS)"
+echo "  Max concurrent PDFs: 2"
 echo "========================================="
 
 # Set GPU-only environment variables
 export REQUIRE_GPU=true
 export CUDA_VISIBLE_DEVICES=0  # Use first GPU only
+export MAX_WORKERS=2  # Allow 2 concurrent PDF processing workers
 
 echo "GPU-only mode enabled (REQUIRE_GPU=true)"
 echo "RTX 3090 optimizations active:"
 echo "  - Enhanced CUDA memory management"
 echo "  - TF32 acceleration enabled"
 echo "  - Up to 500MB file size support"
-echo "  - Batch processing for small files"
+echo "  - 2 concurrent PDF processing workers"
 echo "========================================="
 
 # Start uvicorn with RTX 3090 optimized settings

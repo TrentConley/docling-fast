@@ -145,18 +145,11 @@ class DoclingBenchmark:
         cpu_count = psutil.cpu_count(logical=True)
         memory_gb = psutil.virtual_memory().total / (1024**3)
         
-        # For RTX 3090 + high-end CPU, allow much higher concurrency
-        # Base concurrency on CPU count, but allow higher for powerful systems
-        base_concurrency = cpu_count + 2
-        
-        # Scale up for high-end systems (RTX 3090 + plenty of RAM)
-        if memory_gb > 32:  # High-end system
-            optimal = min(base_concurrency * 2, 100)  # Allow up to 100 concurrent requests
-        else:
-            optimal = min(base_concurrency, 50)  # Allow up to 50 for mid-range systems
+        # Limit to 5 concurrent requests as requested
+        optimal = 5
             
         self.logger.info(f"Detected {cpu_count} CPU cores, {memory_gb:.1f}GB RAM")
-        self.logger.info(f"Using {optimal} concurrent requests (high-performance mode)")
+        self.logger.info(f"Using {optimal} concurrent requests (limited mode)")
         return optimal
 
     async def benchmark_api(self, pdf_files: List[Path], concurrency: int = None,
@@ -363,8 +356,8 @@ async def main():
     parser = argparse.ArgumentParser(description="Benchmark Docling API performance")
     parser.add_argument('--url', default='http://localhost:5001',
                        help='API base URL (default: http://localhost:5001)')
-    parser.add_argument('--concurrency', type=int, default=None,
-                       help='Number of concurrent requests (default: auto-detect, up to 100 for high-end systems)')
+    parser.add_argument('--concurrency', type=int, default=5,
+                       help='Number of concurrent requests (default: 5)')
     parser.add_argument('--max-files', type=int, default=None,
                        help='Maximum number of PDF files to test (default: all)')
     parser.add_argument('--timeout', type=int, default=300,
